@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package api;
+
+option go_package = "github.com/j143/telco-config/pkg/api";
+
+// IroncladDB service definition
+service IroncladDB {
+  // Put stores a key-value pair with optional version check
+  rpc Put(PutRequest) returns (PutResponse);
+  
+  // Get retrieves a value by key
+  rpc Get(GetRequest) returns (GetResponse);
+  
+  // Delete removes a key with optional version check
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  
+  // Scan retrieves keys with a given prefix (for management tools)
+  rpc Scan(ScanRequest) returns (ScanResponse);
+  
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message PutRequest {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 expected_version = 3; // 0 means no version check
+}
+
+message PutResponse {
+  uint64 version = 1; // New version after put
+}
+
+message GetRequest {
+  bytes key = 1;
+}
+
+message GetResponse {
+  bytes value = 1;
+  uint64 version = 2;
+}
+
+message DeleteRequest {
+  bytes key = 1;
+  uint64 expected_version = 2; // 0 means no version check
+}
+
+message DeleteResponse {
+  bool success = 1;
+}
+
+message ScanRequest {
+  bytes prefix = 1;
+  int32 limit = 2; // Maximum number of results
+}
+
+message ScanResponse {
+  repeated KeyValue items = 1;
+}
+
+message KeyValue {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 version = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string status = 2;
+}

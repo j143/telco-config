@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ironclad-db
+  labels:
+    app: ironclad-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ironclad-db
+  template:
+    metadata:
+      labels:
+        app: ironclad-db
+    spec:
+      serviceAccountName: ironclad-db
+      containers:
+      - name: ironclad-db
+        image: ironclad-db:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9090
+          name: grpc
+          protocol: TCP
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: STORAGE_ACCOUNT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ironclad-db-config
+              key: storage_account_url
+        - name: CONTAINER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: ironclad-db-config
+              key: container_name
+        - name: PAGE_BLOB_NAME
+          value: "shard-$(POD_NAME).blob"
+        - name: WAL_BLOB_NAME
+          value: "shard-$(POD_NAME).wal"
+        - name: INIT_MODE
+          value: "false"  # Set to true only for initial setup
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ironclad-db
+  annotations:
+    azure.workload.identity/client-id: "YOUR_MANAGED_IDENTITY_CLIENT_ID"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ironclad-db-config
+data:
+  storage_account_url: "https://your-account.blob.core.windows.net"
+  container_name: "ironclad-db"
