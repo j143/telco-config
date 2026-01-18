@@ -98,13 +98,16 @@ func MarshalSlot(keyHash uint64, key, value []byte, version uint64, flags uint32
 	binary.LittleEndian.PutUint16(buf[8:10], uint16(len(key)))
 	binary.LittleEndian.PutUint16(buf[10:12], uint16(len(value)))
 	binary.LittleEndian.PutUint64(buf[12:20], version)
+	// CRC at 20:24 will be written after calculation
 	binary.LittleEndian.PutUint32(buf[24:28], flags)
+	// Reserved bytes at 28:40 are zero-initialized
 
 	// Write key and value
 	copy(buf[SlotHeaderSize:SlotHeaderSize+len(key)], key)
 	copy(buf[SlotHeaderSize+len(key):SlotHeaderSize+len(key)+len(value)], value)
 
-	// Calculate CRC over everything except the CRC field itself
+	// Calculate CRC over all data except the CRC field itself (bytes 20-24)
+	// This includes: header before CRC (0:20) + header after CRC (24:40) + key + value
 	crc := crc32.ChecksumIEEE(buf[0:20])
 	crc = crc32.Update(crc, crc32.IEEETable, buf[24:SlotHeaderSize+len(key)+len(value)])
 	binary.LittleEndian.PutUint32(buf[20:24], crc)
@@ -146,7 +149,17 @@ func UnmarshalSlot(data []byte) (keyHash uint64, key, value []byte, version uint
 
 // MarshalWALRecord serializes a WAL record to bytes
 func MarshalWALRecord(record *WALRecord) ([]byte, error) {
-	recordSize := 32 + len(record.Key) + len(record.Value)
+	// WAL record layout:
+	// - OpType: 1 byte
+	// - KeyHash: 8 bytes
+	// - SlotOffset: 8 bytes
+	// - Version: 8 bytes
+	// - KeyLen: 2 bytes
+	// - ValueLen: 2 bytes
+	// - CRC: 4 bytes (calculated over all other fields)
+	// Total header: 33 bytes
+	// Then: Key bytes + Value bytes
+	recordSize := 33 + len(record.Key) + len(record.Value)
 	buf := make([]byte, recordSize)
 
 	buf[0] = record.OpType
@@ -155,14 +168,16 @@ func MarshalWALRecord(record *WALRecord) ([]byte, error) {
 	binary.LittleEndian.PutUint64(buf[17:25], record.Version)
 	binary.LittleEndian.PutUint16(buf[25:27], record.KeyLen)
 	binary.LittleEndian.PutUint16(buf[27:29], record.ValueLen)
+	// CRC at 29:33 will be written after calculation
 
-	copy(buf[32:32+len(record.Key)], record.Key)
-	copy(buf[32+len(record.Key):], record.Value)
+	copy(buf[33:33+len(record.Key)], record.Key)
+	copy(buf[33+len(record.Key):], record.Value)
 
-	// Calculate CRC
+	// Calculate CRC over all data except the CRC field itself (bytes 29-33)
+	// This includes: header before CRC (0:29) + key + value (33:end)
 	crc := crc32.ChecksumIEEE(buf[0:29])
-	crc = crc32.Update(crc, crc32.IEEETable, buf[32:])
-	binary.LittleEndian.PutUint32(buf[29:32], crc)
+	crc = crc32.Update(crc, crc32.IEEETable, buf[33:])
+	binary.LittleEndian.PutUint32(buf[29:33], crc)
 	record.CRC = crc
 
 	return buf, nil
@@ -170,7 +185,7 @@ func MarshalWALRecord(record *WALRecord) ([]byte, error) {
 
 // UnmarshalWALRecord deserializes a WAL record from bytes
 func UnmarshalWALRecord(data []byte) (*WALRecord, int, error) {
-	if len(data) < 32 {
+	if len(data) < 33 {
 		return nil, 0, fmt.Errorf("insufficient data for WAL record header")
 	}
 
@@ -181,25 +196,25 @@ func UnmarshalWALRecord(data []byte) (*WALRecord, int, error) {
 		Version:    binary.LittleEndian.Uint64(data[17:25]),
 		KeyLen:     binary.LittleEndian.Uint16(data[25:27]),
 		ValueLen:   binary.LittleEndian.Uint16(data[27:29]),
-		CRC:        binary.LittleEndian.Uint32(data[29:32]),
+		CRC:        binary.LittleEndian.Uint32(data[29:33]),
 	}
 
-	recordSize := 32 + int(record.KeyLen) + int(record.ValueLen)
+	recordSize := 33 + int(record.KeyLen) + int(record.ValueLen)
 	if len(data) < recordSize {
 		return nil, 0, fmt.Errorf("WAL record data truncated")
 	}
 
 	// Verify CRC
 	crc := crc32.ChecksumIEEE(data[0:29])
-	crc = crc32.Update(crc, crc32.IEEETable, data[32:recordSize])
+	crc = crc32.Update(crc, crc32.IEEETable, data[33:recordSize])
 	if crc != record.CRC {
 		return nil, 0, fmt.Errorf("WAL record CRC mismatch")
 	}
 
 	record.Key = make([]byte, record.KeyLen)
 	record.Value = make([]byte, record.ValueLen)
-	copy(record.Key, data[32:32+record.KeyLen])
-	copy(record.Value, data[32+record.KeyLen:recordSize])
+	copy(record.Key, data[33:33+record.KeyLen])
+	copy(record.Value, data[33+record.KeyLen:recordSize])
 
 	return record, recordSize, nil
 }
